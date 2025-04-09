@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frame Generation Calculator</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 700px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            background-color: #f8f9fa;
+            color: #212529;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #0a2a4d; /* Nvidia-ish green could also work: #76b900 */
+            margin-bottom: 1.5rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+        }
+        input[type="number"] {
+            width: calc(100% - 1rem);
+            padding: 0.5rem;
+            margin-bottom: 1rem;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+        button {
+            display: block;
+            width: 100%;
+            padding: 0.75rem;
+            background-color: #76b900; /* Nvidia Green */
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        button:hover {
+            background-color: #6aa300;
+        }
+        #results {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            border-left: 5px solid #76b900;
+        }
+        #results h2 {
+            margin-top: 0;
+            color: #0a2a4d;
+            border-bottom: 1px solid #ced4da;
+            padding-bottom: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        #results p {
+            margin-bottom: 0.5rem;
+        }
+        .recommendation {
+            font-weight: bold;
+            font-size: 1.1em;
+            color: #198754; /* Bootstrap success green */
+        }
+         .warning {
+            font-size: 0.9em;
+            color: #6c757d;
+            margin-top: 1.5rem;
+            border-top: 1px dashed #ced4da;
+            padding-top: 1rem;
+        }
+         strong { color: #0a2a4d; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Frame Generation Optimizer</h1>
+        <p>Determine the best Frame Generation (FG) setting to use based on your base FPS and monitor refresh rate, minimizing potential input lag increase caused by hitting the Reflex FPS cap.</p>
+
+        <label for="baseFps">1. Base Frame Rate (FPS):</label>
+        <input type="number" id="baseFps" placeholder="e.g., 70" min="1">
+        <small style="display:block; margin-top:-0.75rem; margin-bottom:1rem; color:#6c757d;">Enter your average FPS *without* Frame Generation enabled (but with DLSS/FSR/XeSS Super Resolution enabled if you plan to use it).</small>
+
+        <label for="refreshRate">2. Monitor Refresh Rate (Hz):</label>
+        <input type="number" id="refreshRate" placeholder="e.g., 144" min="1">
+        <small style="display:block; margin-top:-0.75rem; margin-bottom:1rem; color:#6c757d;">Enter the maximum refresh rate of your monitor.</small>
+
+        <label for="perfHit">3. Estimated FG Performance Hit (%):</label>
+        <input type="number" id="perfHit" value="10" min="0" max="50">
+        <small style="display:block; margin-top:-0.75rem; margin-bottom:1.5rem; color:#6c757d;">Estimated percentage drop in base FPS when FG is active. 10% is a common estimate, adjust if needed.</small>
+
+        <button onclick="calculateFg()">Calculate Optimal Setting</button>
+
+        <div id="results" style="display: none;">
+            <h2>Calculation Results</h2>
+            <p id="reflexCapResult"></p>
+            <p id="estimatedBaseResult"></p>
+            <p id="potential2x"></p>
+            <p id="potential3x"></p>
+            <p id="potential4x"></p>
+            <p id="recommendation" class="recommendation"></p>
+            <p id="explanation"></p>
+
+            <div class="warning">
+                <strong>Disclaimer:</strong> This calculator uses a simplified model based on the principles discussed online. Actual performance and latency can vary based on the specific game, system hardware (CPU/GPU balance), graphics settings, and NVIDIA driver/Reflex implementation details. The 10% performance hit is an estimate. Always test in-game to confirm the best experience for you. Frame Generation requires NVIDIA Reflex, which caps FPS slightly below the refresh rate to reduce latency.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function calculateFg() {
+            // --- Get Inputs ---
+            const baseFpsInput = document.getElementById('baseFps');
+            const refreshRateInput = document.getElementById('refreshRate');
+            const perfHitInput = document.getElementById('perfHit');
+            const resultsDiv = document.getElementById('results');
+            const reflexCapResult = document.getElementById('reflexCapResult');
+            const estimatedBaseResult = document.getElementById('estimatedBaseResult');
+            const potential2x = document.getElementById('potential2x');
+            const potential3x = document.getElementById('potential3x');
+            const potential4x = document.getElementById('potential4x');
+            const recommendation = document.getElementById('recommendation');
+            const explanation = document.getElementById('explanation');
+
+            const baseFps = parseFloat(baseFpsInput.value);
+            const refreshRate = parseFloat(refreshRateInput.value);
+            const perfHitPercent = parseFloat(perfHitInput.value);
+
+            // --- Input Validation ---
+            if (isNaN(baseFps) || baseFps <= 0 || isNaN(refreshRate) || refreshRate <= 0 || isNaN(perfHitPercent) || perfHitPercent < 0 || perfHitPercent > 50) {
+                alert("Please enter valid, positive numbers for Base FPS and Refresh Rate, and a Performance Hit between 0% and 50%.");
+                resultsDiv.style.display = 'none';
+                return;
+            }
+
+            // --- Calculations ---
+            // Calculate Reflex cap (slightly below refresh rate, using 95% as a common heuristic, or refreshRate - 3 to 5 is also common)
+            const reflexCap = Math.floor(refreshRate * 0.95);
+            // The original post implicitly used ~90-95% (110-115 for 120Hz). Let's use 95% but floor it.
+            // const reflexCap = Math.floor(refreshRate * 0.90); // Alternative based on post's 120Hz -> ~110 example
+
+            // Estimate the base FPS *with* FG enabled
+            const estimatedBaseFpsWithFg = baseFps * (1 - (perfHitPercent / 100));
+
+            // Calculate potential FPS at different FG levels
+            const potentialFps2x = Math.round(estimatedBaseFpsWithFg * 2);
+            const potentialFps3x = Math.round(estimatedBaseFpsWithFg * 3); // Hypothetical 3x
+            const potentialFps4x = Math.round(estimatedBaseFpsWithFg * 4); // Hypothetical 4x
+
+            // --- Determine Recommendation ---
+            let recommendedSetting = "None";
+            let explanationText = "";
+
+            // Check FG levels sequentially, choosing the highest that fits under the cap
+            if (potentialFps2x <= reflexCap && estimatedBaseFpsWithFg > 30) { // Add a minimum base FPS sanity check (e.g., >30)
+                recommendedSetting = "2x Frame Generation";
+                explanationText = `2x FG yields approx. <strong>${potentialFps2x} FPS</strong> (from an estimated base of ${Math.round(estimatedBaseFpsWithFg)} FPS), which is below the estimated Reflex cap of ${reflexCap} FPS.`;
+                if (potentialFps3x <= reflexCap) {
+                     recommendedSetting = "3x Frame Generation";
+                     explanationText = `3x FG yields approx. <strong>${potentialFps3x} FPS</strong> (from an estimated base of ${Math.round(estimatedBaseFpsWithFg)} FPS), which is below the estimated Reflex cap of ${reflexCap} FPS.`;
+                     if (potentialFps4x <= reflexCap) {
+                          recommendedSetting = "4x Frame Generation";
+                          explanationText = `4x FG yields approx. <strong>${potentialFps4x} FPS</strong> (from an estimated base of ${Math.round(estimatedBaseFpsWithFg)} FPS), which is below the estimated Reflex cap of ${reflexCap} FPS. Choose the highest available setting (2x, 3x, or 4x) that stays below the cap.`;
+                     } else {
+                         explanationText += ` 4x FG (${potentialFps4x} FPS) would exceed the cap. Choose the highest available setting (2x or 3x) that stays below the cap.`
+                     }
+                } else {
+                    explanationText += ` Higher multipliers (${potentialFps3x}+ FPS) would likely exceed the cap.`;
+                }
+            } else if (estimatedBaseFpsWithFg <= 30) {
+                 recommendedSetting = "None (or potentially 2x)";
+                 explanationText = `Your estimated base FPS with FG active (${Math.round(estimatedBaseFpsWithFg)} FPS) is quite low. While 2x FG (${potentialFps2x} FPS) might be below the cap (${reflexCap} FPS), the input latency corresponding to such a low base framerate might feel poor. Consider lowering settings or resolution first, or test 2x FG carefully.`;
+                 if (potentialFps2x > reflexCap) {
+                     explanationText = `Your estimated base FPS with FG active (${Math.round(estimatedBaseFpsWithFg)} FPS) is low, and even 2x FG (${potentialFps2x} FPS) would exceed the Reflex cap (${reflexCap} FPS). Frame Generation is not recommended here; focus on increasing base FPS first.`;
+                 }
+            }
+            else {
+                recommendedSetting = "None";
+                explanationText = `Even 2x Frame Generation (estimated ${potentialFps2x} FPS) would likely exceed the estimated Reflex cap of ${reflexCap} FPS, forcing a lower base framerate and increasing latency unnecessarily. Stick to no Frame Generation, or consider lowering game settings to increase base FPS if you want to use FG.`;
+                 // Check if base FPS is already near/above cap
+                if (baseFps >= reflexCap) {
+                   explanationText += ` Your base FPS (${baseFps}) is already near or above the Reflex cap, providing a good experience without FG.`;
+                }
+            }
+
+             // Handle cases where base FPS itself is very low without FG
+            if (baseFps < 40) {
+                 explanationText += " Note: Your starting base FPS is low; achieving a smooth experience even with FG might be challenging without reducing graphics settings."
+            }
+
+
+            // --- Display Results ---
+            reflexCapResult.innerHTML = `Estimated Reflex FPS Cap: <strong>~${reflexCap} FPS</strong> (for ${refreshRate} Hz Monitor)`;
+            estimatedBaseResult.innerHTML = `Estimated Base FPS with FG Active: <strong>~${Math.round(estimatedBaseFpsWithFg)} FPS</strong> (assuming ${perfHitPercent}% hit)`;
+            potential2x.innerHTML = `Potential with 2x FG: <strong>~${potentialFps2x} FPS</strong>`;
+            potential3x.innerHTML = `Potential with 3x FG: <strong>~${potentialFps3x} FPS</strong> (Hypothetical)`;
+            potential4x.innerHTML = `Potential with 4x FG: <strong>~${potentialFps4x} FPS</strong> (Hypothetical)`;
+            recommendation.innerHTML = `Recommended Setting: ${recommendedSetting}`;
+            explanation.innerHTML = `<strong>Reasoning:</strong> ${explanationText}`;
+
+            resultsDiv.style.display = 'block'; // Show results section
+        }
+    </script>
+</body>
+</html>
